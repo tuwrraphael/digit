@@ -189,6 +189,7 @@ class _MyHomePageState extends State<MyHomePage> {
     
     _setCurentLocation();
     // var device = BluetoothDevice.fromId("DB:DF:92:0C:B5:94");
+    // var device = BluetoothDevice.fromId("dev_id");
     // await device.connect(autoConnect: false);
     // await device.discoverServices(subscribeToServicesChanged: false);
     // var service = await findDigitService(device);
