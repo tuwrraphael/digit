@@ -188,6 +188,7 @@ class _MyHomePageState extends State<MyHomePage> {
     var writeData = [0];
     
     _setCurentLocation();
+    // var device = BluetoothDevice.fromId("DB:DF:92:0C:B5:94");
     // var device = BluetoothDevice.fromId("dev_id");
     // await device.connect(autoConnect: false);
     // await device.discoverServices(subscribeToServicesChanged: false);
@@ -220,7 +221,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void _readBattery() async {
-    var device = BluetoothDevice.fromId("dev_id");
+    var device = BluetoothDevice.fromId("DB:DF:92:0C:B5:94");
     await device.connect(autoConnect: false);
     await device.discoverServices(subscribeToServicesChanged: false);
     var service = await findBatteryService(device);
