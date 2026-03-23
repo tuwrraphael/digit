@@ -88,10 +88,10 @@ class SyncForegroundService : Service() {
     }
 
     private fun appendBatteryHistory(level: Int) {
-        val file = File(filesDir, "battery_history.txt")
+        //val file = File(filesDir, "battery_history.txt")
         val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(System.currentTimeMillis())
         val voltage = _convertToVoltage(level)
-        file.appendText("$timestamp: $level (${String.format("%.3f", voltage)} V)\n")
+        //file.appendText("$timestamp: $level (${String.format("%.3f", voltage)} V)\n")
         sendBroadcast(Intent("PREFS_UPDATED"))
 
         // Home Assistant POST

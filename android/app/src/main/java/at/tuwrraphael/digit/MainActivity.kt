@@ -20,6 +20,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.ParcelUuid
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -69,6 +70,8 @@ class MainActivity : ComponentActivity() {
     private val lastCtsWrite = mutableStateOf(0L)
     private val batteryHistory = mutableStateOf("")
 
+    private val companionHistory = mutableStateOf("")
+
     private val associatedMac = mutableStateOf<String?>(null)
 
     private val calendarPermissionGranted = mutableStateOf(false)
@@ -79,6 +82,7 @@ class MainActivity : ComponentActivity() {
             if (intent?.action == "PREFS_UPDATED") {
                 updateFromPrefs()
                 updateBatteryHistory()
+                updateCompanionHistory()
             }
         }
     }
@@ -111,8 +115,10 @@ class MainActivity : ComponentActivity() {
         registerReceiver(prefsUpdatesReceiver, IntentFilter("PREFS_UPDATED"), Context.RECEIVER_NOT_EXPORTED)
         updateFromPrefs()
         updateBatteryHistory()
+        updateCompanionHistory()
         updateAssociatedMac()
         checkCalendarPermission()
+        startObservingCompanionPresence()
         setContent {
             DigitTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -123,13 +129,17 @@ class MainActivity : ComponentActivity() {
                         onStartForegroundService = { syncDevice() },
                         lastCtsWrite = lastCtsWrite.value,
                         batteryHistory = batteryHistory.value,
+                        companionHistory = companionHistory.value,
                         associatedMac = associatedMac.value,
                         onUnassociate = { unassociateDevice() },
                         calendarPermissionGranted = calendarPermissionGranted.value,
                         onRequestCalendarPermission = { calendarPermissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
                         onCopyBatteryHistory = { copyBatteryHistoryToClipboard() },
+                        onCopyCompanionHistory = { copyCompanionHistoryToClipboard() },
                         onSaveHomeAssistantConfig = { url, webhookId -> saveHomeAssistantConfig(url, webhookId) },
-                        homeAssistantConfig = loadHomeAssistantConfig()
+                        homeAssistantConfig = loadHomeAssistantConfig(),
+                        onClearCompanionHistory = { clearCompanionHistory() },
+                        onClearBatteryHistory = { clearBatteryHistory() }
                     )
                 }
             }
@@ -177,11 +187,37 @@ class MainActivity : ComponentActivity() {
         batteryHistory.value = if (file.exists()) file.readText() else "Keine Batteriehistorie vorhanden."
     }
 
+    private fun updateCompanionHistory() {
+        val file = File(filesDir, "companion_device_history.txt")
+        companionHistory.value = if (file.exists()) file.readText() else "Keine Companion-Historie vorhanden."
+    }
+
+    private fun clearCompanionHistory() {
+        val file = File(filesDir, "companion_device_history.txt")
+        if (file.exists()) file.writeText("")
+        updateCompanionHistory()
+        Toast.makeText(this, "Companion-Historie gelöscht", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun clearBatteryHistory() {
+        val file = File(filesDir, "battery_history.txt")
+        if (file.exists()) file.writeText("")
+        updateBatteryHistory()
+        Toast.makeText(this, "Batteriehistorie gelöscht", Toast.LENGTH_SHORT).show()
+    }
+
     private fun copyBatteryHistoryToClipboard() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText("Batteriehistorie", batteryHistory.value)
         clipboard.setPrimaryClip(clip)
         Toast.makeText(this, "Batteriehistorie kopiert", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun copyCompanionHistoryToClipboard() {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("CompanionHistorie", companionHistory.value)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(this, "Companion-Historie kopiert", Toast.LENGTH_SHORT).show()
     }
 
     @SuppressLint("MissingPermission")
@@ -193,6 +229,17 @@ class MainActivity : ComponentActivity() {
             val deviceToPair: ScanResult? =
                 result.data?.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE);
             deviceToPair?.device?.createBond();
+            // Nach erfolgreichem Bonding Präsenzüberwachung starten
+            val mac = deviceToPair?.device?.address
+            if (!mac.isNullOrBlank()) {
+                val deviceManager = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+                try {
+                    deviceManager.startObservingDevicePresence(mac)
+                    Log.d("MainActivity", "startObservingDevicePresence für $mac aufgerufen (nach Pairing)")
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Fehler beim Starten der Präsenzüberwachung nach Pairing", e)
+                }
+            }
         }
     }
 
@@ -284,6 +331,20 @@ class MainActivity : ComponentActivity() {
         val webhookId = prefs.getString("ha_webhook_id", "") ?: ""
         return Pair(url, webhookId)
     }
+
+    private fun startObservingCompanionPresence() {
+        val deviceManager = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+        val associations = deviceManager.associations
+        val mac = associations.firstOrNull()
+        if (!mac.isNullOrBlank()) {
+            try {
+                deviceManager.startObservingDevicePresence(mac)
+                Log.d("MainActivity", "startObservingDevicePresence für $mac aufgerufen")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Fehler beim Starten der Präsenzüberwachung", e)
+            }
+        }
+    }
 }
 
 @Composable
@@ -294,13 +355,17 @@ fun Greeting(
     onStartForegroundService: () -> Unit = {},
     lastCtsWrite: Long = 0L,
     batteryHistory: String = "",
+    companionHistory: String = "",
     associatedMac: String? = null,
     onUnassociate: () -> Unit = {},
     calendarPermissionGranted: Boolean = false,
     onRequestCalendarPermission: () -> Unit = {},
     onCopyBatteryHistory: () -> Unit = {},
+    onCopyCompanionHistory: () -> Unit = {},
     onSaveHomeAssistantConfig: (String, String) -> Unit = { _, _ -> },
     homeAssistantConfig: Pair<String, String> = Pair("", ""),
+    onClearCompanionHistory: () -> Unit = {},
+    onClearBatteryHistory: () -> Unit = {}
 ) {
     // Formatieren des Zeitstempels
     val formattedTime = if (lastCtsWrite > 0) {
@@ -311,6 +376,7 @@ fun Greeting(
 
     val scrollState = rememberScrollState()
     val batteryScrollState = rememberScrollState()
+    val companionScrollState = rememberScrollState()
 
     var haUrl by remember { mutableStateOf(homeAssistantConfig.first) }
     var haWebhookId by remember { mutableStateOf(homeAssistantConfig.second) }
@@ -357,6 +423,32 @@ fun Greeting(
         }
         Button(onClick = onCopyBatteryHistory) {
             Text("Batteriehistorie kopieren")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = onClearBatteryHistory) {
+            Text("Batteriehistorie löschen")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Companion-Historie:")
+        Box(
+            modifier = Modifier
+                .heightIn(max = 200.dp)
+                .verticalScroll(companionScrollState)
+                .background(Color(0xFFF5F5F5))
+        ) {
+            Text(
+                companionHistory,
+                modifier = Modifier.padding(8.dp),
+                maxLines = Int.MAX_VALUE,
+                overflow = TextOverflow.Visible
+            )
+        }
+        Button(onClick = onCopyCompanionHistory) {
+            Text("Companion-Historie kopieren")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = onClearCompanionHistory) {
+            Text("Companion-Historie löschen")
         }
         Spacer(modifier = Modifier.height(16.dp))
         if (!calendarPermissionGranted) {
