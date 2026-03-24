@@ -70,12 +70,6 @@ class SyncForegroundService : Service() {
         sendBroadcast(Intent("PREFS_UPDATED"))
     }
 
-    private fun _convertToVoltage(g: Int): Double {
-        val y = (179 * g) / 100 + 711
-        val x = 9.0 * y / 2560.0
-        return x
-    }
-
     private fun synchronize() {
         val deviceManager = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager;
         val associatedDevices = deviceManager.associations;
@@ -205,14 +199,17 @@ class SyncForegroundService : Service() {
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     private fun sendWhatsAppCountToWatch(gatt: BluetoothGatt) {
         val prefs = getSharedPreferences("sync_prefs", Context.MODE_PRIVATE)
-        val count = prefs.getInt("whatsapp_unread_count", 0)
-        Log.d("SyncForegroundService", "WhatsApp ungelesene Nachrichten (senden): $count")
+        val whatsappcount = prefs.getInt("whatsapp_unread_count", 0)
+        val emailcount = prefs.getInt("thunderbird_unread_count", 0)
+        Log.d("SyncForegroundService", "WhatsApp Count: $whatsappcount, Thunderbird Count: $emailcount")
         val digitService = findDigitService(gatt.device, gatt)
         if (digitService != null) {
             val char = digitService.characteristics.firstOrNull { it.uuid == WHATSAPP_COUNT_CHARACTERISTIC_UUID }
             if (char != null) {
-                char.value = byteArrayOf(count.toByte())
-                gatt.writeCharacteristic(char)
+                gatt.writeCharacteristic(char.apply {
+                    value = byteArrayOf(whatsappcount.toByte(), emailcount.toByte())
+                    writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                })
             } else {
                 if (DO_DISCONNECT) {
                     gatt.disconnect()
