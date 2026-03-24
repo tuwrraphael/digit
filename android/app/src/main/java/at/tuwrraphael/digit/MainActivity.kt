@@ -64,6 +64,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Dp
+import android.provider.Settings
 
 private const val SELECT_DEVICE_REQUEST_CODE = 0
 class MainActivity : ComponentActivity() {
@@ -75,6 +76,8 @@ class MainActivity : ComponentActivity() {
     private val associatedMac = mutableStateOf<String?>(null)
 
     private val calendarPermissionGranted = mutableStateOf(false)
+
+    private val notificationAccessGranted = mutableStateOf(false)
 
     private val prefsUpdatesReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -102,6 +105,12 @@ class MainActivity : ComponentActivity() {
     private fun checkCalendarPermission() {
         calendarPermissionGranted.value =
             ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun checkNotificationAccess() {
+        val enabledListeners = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+        val packageName = packageName
+        notificationAccessGranted.value = !enabledListeners.isNullOrEmpty() && enabledListeners.contains(packageName)
     }
 
     override fun onDestroy() {
@@ -139,7 +148,11 @@ class MainActivity : ComponentActivity() {
                         onSaveHomeAssistantConfig = { url, webhookId -> saveHomeAssistantConfig(url, webhookId) },
                         homeAssistantConfig = loadHomeAssistantConfig(),
                         onClearCompanionHistory = { clearCompanionHistory() },
-                        onClearBatteryHistory = { clearBatteryHistory() }
+                        onClearBatteryHistory = { clearBatteryHistory() },
+                        onRequestNotificationAccess = {
+                            startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+                        },
+                        notificationAccessGranted = notificationAccessGranted.value
                     )
                 }
             }
@@ -167,6 +180,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         updateAssociatedMac()
+        checkNotificationAccess()
     }
 
     private fun unassociateDevice() {
@@ -365,7 +379,9 @@ fun Greeting(
     onSaveHomeAssistantConfig: (String, String) -> Unit = { _, _ -> },
     homeAssistantConfig: Pair<String, String> = Pair("", ""),
     onClearCompanionHistory: () -> Unit = {},
-    onClearBatteryHistory: () -> Unit = {}
+    onClearBatteryHistory: () -> Unit = {},
+    onRequestNotificationAccess: () -> Unit = {},
+    notificationAccessGranted: Boolean = true,
 ) {
     // Formatieren des Zeitstempels
     val formattedTime = if (lastCtsWrite > 0) {
@@ -470,6 +486,13 @@ fun Greeting(
         )
         Button(onClick = { onSaveHomeAssistantConfig(haUrl, haWebhookId) }) {
             Text("Speichern")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        if (!notificationAccessGranted) {
+            Button(onClick = onRequestNotificationAccess) {
+                Text("Benachrichtigungszugriff erlauben")
+            }
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }

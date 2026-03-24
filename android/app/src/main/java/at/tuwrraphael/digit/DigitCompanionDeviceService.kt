@@ -141,6 +141,7 @@ class DigitCompanionDeviceService : CompanionDeviceService() {
                 override fun onConnectionStateChange(gatt: android.bluetooth.BluetoothGatt, status: Int, newState: Int) {
                     try {
                         if (newState == BluetoothProfile.STATE_CONNECTED) {
+                            //gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER)
                             appendAppearanceHistory(instanceId, "connected")
                             // Batterie-Service suchen
                             gatt.discoverServices()

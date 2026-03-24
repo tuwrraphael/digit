@@ -37,10 +37,7 @@ class SyncForegroundService : Service() {
     companion object {
         val DIGIT_SERVICE_UUID = java.util.UUID.fromString("00001523-1212-efde-1523-785fef13d123")
         val CTS_CHARACTERISTIC_UUID = java.util.UUID.fromString("00001805-1212-efde-1523-785fef13d123")
-        val BATTERY_SERVICE_UUID = java.util.UUID.fromString("0000180F-0000-1000-8000-00805f9b34fb")
-        val BATTERY_LEVEL_CHARACTERISTIC_UUID = java.util.UUID.fromString("00002A19-0000-1000-8000-00805f9b34fb")
         const val SYNC_ALARM_ACTION = "at.tuwrraphael.digit.SYNC_ALARM"
-
         const val DO_DISCONNECT = false;
     }
 
@@ -67,14 +64,6 @@ class SyncForegroundService : Service() {
         return service.characteristics.firstOrNull { it.uuid == CTS_CHARACTERISTIC_UUID }
     }
 
-    private fun findBatteryService(gatt: BluetoothGatt): BluetoothGattService? {
-        return gatt.services.firstOrNull { it.uuid == BATTERY_SERVICE_UUID }
-    }
-
-    private fun findBatteryLevelCharacteristic(service: BluetoothGattService): BluetoothGattCharacteristic? {
-        return service.characteristics.firstOrNull { it.uuid == BATTERY_LEVEL_CHARACTERISTIC_UUID }
-    }
-
     private fun logLastSuccessfulCtsWrite() {
         val prefs = getSharedPreferences("sync_prefs", Context.MODE_PRIVATE)
         prefs.edit().putLong("last_cts_write", System.currentTimeMillis()).apply()
@@ -85,40 +74,6 @@ class SyncForegroundService : Service() {
         val y = (179 * g) / 100 + 711
         val x = 9.0 * y / 2560.0
         return x
-    }
-
-    private fun appendBatteryHistory(level: Int) {
-        //val file = File(filesDir, "battery_history.txt")
-        val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(System.currentTimeMillis())
-        val voltage = _convertToVoltage(level)
-        //file.appendText("$timestamp: $level (${String.format("%.3f", voltage)} V)\n")
-        sendBroadcast(Intent("PREFS_UPDATED"))
-
-        // Home Assistant POST
-        val prefs = getSharedPreferences("sync_prefs", Context.MODE_PRIVATE)
-        val haUrl = prefs.getString("ha_url", null)
-        val webhookId = prefs.getString("ha_webhook_id", null)
-        if (!haUrl.isNullOrBlank() && !webhookId.isNullOrBlank()) {
-                try {
-                    val url = URL("${haUrl.trimEnd('/')}/api/webhook/${webhookId.trim()}")
-                    val json = JSONObject()
-                    json.put("batteryRaw", level)
-                    val voltageRounded = Math.round(voltage * 1000) / 1000.0
-                    json.put("batteryVoltage", voltageRounded)
-                    val conn = url.openConnection() as HttpURLConnection
-                    conn.requestMethod = "POST"
-                    conn.setRequestProperty("Content-Type", "application/json")
-                    conn.doOutput = true
-                    conn.outputStream.use { it.write(json.toString().toByteArray()) }
-                    val code = conn.responseCode
-                    if (code != 200) {
-                        Log.w("SyncForegroundService", "Home Assistant POST failed: $code")
-                    }
-                    conn.disconnect()
-                } catch (e: Exception) {
-                    Log.e("SyncForegroundService", "Home Assistant POST error", e)
-                }
-        }
     }
 
     private fun synchronize() {
@@ -152,6 +107,7 @@ class SyncForegroundService : Service() {
             @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    //gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER)
                     gatt.discoverServices()
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     gatt.close()
@@ -179,35 +135,7 @@ class SyncForegroundService : Service() {
             ) {
                 if (characteristic.uuid == CTS_CHARACTERISTIC_UUID && status == BluetoothGatt.GATT_SUCCESS) {
                     logLastSuccessfulCtsWrite()
-                    // Battery auslesen
-                    val batteryService = findBatteryService(gatt)
-                    if (batteryService == null) {
-                        if (DO_DISCONNECT) {
-                            gatt.disconnect()
-                        } else {
-                            gatt.close()
-                        }
-                        stopSelf()
-                        return
-                    }
-                    val batteryLevelChar = findBatteryLevelCharacteristic(batteryService)
-                    if (batteryLevelChar != null) {
-                        if (!gatt.readCharacteristic(batteryLevelChar)== true) {
-                            if (DO_DISCONNECT) {
-                                gatt.disconnect()
-                            } else {
-                                gatt.close()
-                            }
-                            stopSelf()
-                        }
-                    } else {
-                        if (DO_DISCONNECT) {
-                            gatt.disconnect()
-                        } else {
-                            gatt.close()
-                        }
-                        stopSelf()
-                    }
+                    sendWhatsAppCountToWatch(gatt)
                 } else {
                     if (DO_DISCONNECT) {
                         gatt.disconnect()
@@ -237,16 +165,7 @@ class SyncForegroundService : Service() {
                 value: ByteArray,
                 status: Int
             ) {
-                if (characteristic.uuid == BATTERY_LEVEL_CHARACTERISTIC_UUID && status == BluetoothGatt.GATT_SUCCESS) {
-                    val batteryLevel = value?.get(0)?.toInt() ?: 0
-                    appendBatteryHistory(batteryLevel)
-                }
-                if (DO_DISCONNECT) {
-                    gatt.disconnect()
-                } else {
-                    gatt.close()
-                }
-                stopSelf()
+
             }
         })
 
@@ -277,6 +196,38 @@ class SyncForegroundService : Service() {
             channel.enableVibration(false)
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
+        }
+    }
+
+    // Beispiel-UUID für WhatsApp-Count-Characteristic (anpassen, falls Uhr eine andere UUID erwartet)
+    private val WHATSAPP_COUNT_CHARACTERISTIC_UUID = java.util.UUID.fromString("00001528-1212-efde-1523-785fef13d123")
+
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    private fun sendWhatsAppCountToWatch(gatt: BluetoothGatt) {
+        val prefs = getSharedPreferences("sync_prefs", Context.MODE_PRIVATE)
+        val count = prefs.getInt("whatsapp_unread_count", 0)
+        Log.d("SyncForegroundService", "WhatsApp ungelesene Nachrichten (senden): $count")
+        val digitService = findDigitService(gatt.device, gatt)
+        if (digitService != null) {
+            val char = digitService.characteristics.firstOrNull { it.uuid == WHATSAPP_COUNT_CHARACTERISTIC_UUID }
+            if (char != null) {
+                char.value = byteArrayOf(count.toByte())
+                gatt.writeCharacteristic(char)
+            } else {
+                if (DO_DISCONNECT) {
+                    gatt.disconnect()
+                } else {
+                    gatt.close()
+                }
+                stopSelf()
+            }
+        } else {
+            if (DO_DISCONNECT) {
+                gatt.disconnect()
+            } else {
+                gatt.close()
+            }
+            stopSelf()
         }
     }
 
